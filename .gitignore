@@ -1,0 +1,5 @@
+# Distribution / packaging
+.ipynb_checkpoints/
+.vscode/
+__pycache__/
+*.log
