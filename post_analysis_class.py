@@ -29,12 +29,25 @@ class PostAnalysis:
         self.shap_values = None
         self.shap_explainer = None
         self._create_predictions()
+        self.transformer_dictionary = self._get_transformer_dictionary()
         shap.initjs()
+
+    def _get_transformer_dictionary(self):
+        if self.preprocessor != None:
+            transformer_dictionary = dict()
+
+            for field, transformer, _ in self.preprocessor.transformers_:
+                transformer_dictionary.setdefault(field, []).append(transformer)
+
+            return transformer_dictionary
+        else:
+            return dict()
 
     def _create_predictions(self):
         self.y_pred = self.clf.predict(self.transformed_features.values)
         self.y_pred_prob = self.clf.predict_proba(self.transformed_features.values)
         self.y_pred_pos_prob = self.y_pred_prob[:, 1]
+        self.mean_log_odds = np.mean(np.log(self.y_pred_prob[:, 1] / self.y_pred_prob[:, 0]))
 
     def _get_post_processed_dataframe(self):
         X_test_t = self.preprocessor.transform(self.features)
@@ -141,4 +154,94 @@ class PostAnalysis:
 
         plt.show()
 
-    
+    def _get_feature_importance_permutation(self):
+        result = permutation_importance(self.clf, self.transformed_features.values, self.y_true, n_repeats=10,
+                                random_state=42, n_jobs=2)
+        importance_df = pd.DataFrame({'feature': self.transformed_features.columns,
+                                    'importance': result.importances_mean})
+        plt.figure(figsize=(15, 10))
+        sns.set_color_codes('pastel')
+        sns.barplot(x='importance', y='feature', 
+            data=importance_df[importance_df['importance'] != 0.0].sort_values('importance', ascending=False),
+            label='Importance', color='b')
+        plt.show()
+
+    def _get_feature_importance_from_model(self):
+        importance_df = pd.DataFrame({'feature': self.transformed_features.columns,
+                                    'importance': self.clf.feature_importances_})
+        plt.figure(figsize=(15, 10))
+        sns.set_color_codes('pastel')
+        sns.barplot(x='importance', y='feature', 
+            data=importance_df[importance_df['importance'] != 0.0].sort_values('importance', ascending=False),
+            label='Importance', color='b')
+        plt.show()
+
+    def _get_feature_importance_from_shap(self):
+
+        if self.shap_explainer is None:
+            self.shap_explainer = shap.TreeExplainer(self.clf)
+        if self.shap_values is None:
+            self.shap_values = self.shap_explainer.shap_values(self.transformed_features)
+
+        shap.summary_plot(self.shap_values, self.transformed_features)
+
+    def get_feature_importance(self):
+        outputs = [widgets.Output() for i in range(1, 4)]
+        item_layout = widgets.Layout(margin='0 0 50px 0')
+        tab = widgets.Tab(outputs, layout=item_layout)
+        tab.set_title(0, 'From Model')
+        tab.set_title(1, 'From Permutation')
+        tab.set_title(2, 'From Shap')
+
+        with outputs[0]:
+            self._get_feature_importance_from_model()
+
+        with outputs[1]:
+            self._get_feature_importance_permutation()
+
+        with outputs[2]:
+            self._get_feature_importance_from_shap()
+
+        display(tab)
+
+    def plot_pdp(self, feature, y_pct=True, norm_hist=True, dec=0.5):
+        feature_index = self.transformed_features.columns.tolist().index(feature)
+
+        pardep = partial_dependence(self.clf, self.transformed_features.values, [feature_index])
+
+        pardep_x = pardep[1][0]
+        pardep_y = pardep[0][0]
+
+        if feature in self.transformer_dictionary:
+            transformer = self.transformer_dictionary[feature][0].named_steps['scaler']
+            pardep_x = transformer.inverse_transform(pardep_x)
+            x = transformer.inverse_transform(self.transformed_features[feature])
+        else:
+            x = self.transformed_features[feature]
+
+        pardep_y = np.log(pardep_y / (1 - pardep_y))
+        pardep_y = pardep_y - self.mean_log_odds
+
+        xmin = pardep_x.min()
+        xmax = pardep_x.max()
+        ymin = pardep_y.min()
+        ymax = pardep_y.max()
+
+        fig, ax1 = plt.subplots(figsize=(15,10))
+        ax1.grid(alpha=0.5, linewidth=1)
+
+        color = 'tab:blue'
+        ax1.plot(pardep_x, pardep_y, color=color)
+        ax1.tick_params(axis='y', labelcolor=color)
+        ax1.set_xlabel(feature, fontsize=14)
+        ax1.set_ylabel('Partial Dependence', color=color, fontsize=14)
+
+        ax2 = ax1.twinx()
+        color = 'tab:red'
+        ax2.hist(x, bins=50, range=(xmin, xmax), alpha=0.25, color=color, density=norm_hist)
+        ax2.tick_params(axis='y', labelcolor=color)
+        ax2.set_ylabel('Distribution', color=color, fontsize=14)
+
+        plt.show()
+
+        
