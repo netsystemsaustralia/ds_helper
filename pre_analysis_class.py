@@ -4,6 +4,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+import phik
+
 from IPython.display import display, Markdown
 import ipywidgets as widgets
 
@@ -17,7 +19,7 @@ class PreAnalysis:
         self.target_type = 'categorical' if self.target.dtype == 'object' else 'numerical'
         self._infer_use_case()
         self.numerical_columns = list(self.features.select_dtypes(include=[np.number]).columns)
-        self.categorical_columns = list(self.features.select_dtypes(include=['object']).columns)
+        self.categorical_columns = list(self.features.select_dtypes(include=['object','category']).columns)
 
     def _printmd(self, string):
         display(Markdown(string))
@@ -175,13 +177,20 @@ class PreAnalysis:
         display(the_box)
 
     
-    def show_correlation_matrix(self, with_target=False, remove_duplicate_half=False):
+    def show_correlation_matrix(self, correlation_type='normal', with_target=False, remove_duplicate_half=False):
 
-        df = self.features[self.numerical_columns]
+        if correlation_type != 'phik':
+            df = self.features[self.numerical_columns]
+        else: # phik correlation can deal with categorical columns
+            df = self.features
+
         if with_target:
             df.loc[:, 'target'] = self._label_to_numeric()
 
-        my_corr = df.corr()
+        if correlation_type == 'normal':
+            my_corr = df.corr()
+        elif correlation_type == 'phik':
+            my_corr = df.phik_matrix(interval_cols=self.numerical_columns)
 
         params = {
             'annot': True,
